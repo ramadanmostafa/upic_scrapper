@@ -11,7 +11,7 @@ MAX_PARSED_PAGES_COUNT = 90
 
 DEATH_BY_CAPTCHA_USERNAME = "CardiffBlues"
 DEATH_BY_CAPTCHA_PASSWORD = "dNR3kBQD=nH[i8zvQt4ogqdp6EExPn4By"
-CSV_FILE_NAME = "output_test.csv"
+CSV_FILE_NAME = "output.csv"
 CSV_HEADERS = [
     "Company Name",
     "UPIC",
@@ -134,50 +134,54 @@ class UpicBaseScrapper:
         # wait 2 secs
         time.sleep(2)
 
+    def _solve_captcha(self):
+        print("CAPTCHA DETECTED")
+        # take a screenshot of the whole page
+        captcha_file_name = "screenshot.png"
+        self.selenium.save_screenshot(captcha_file_name)
+        # crop the screenshot to get the captcha image only
+        im = Image.open(captcha_file_name)
+        captcha_image = im.crop(
+            (420, 250, 600, 300)
+        )
+        captcha_image.save("captcha_image.png")
+        # initiate deathbycaptcha client to solve it
+        client = deathbycaptcha.SocketClient(
+            DEATH_BY_CAPTCHA_USERNAME,
+            DEATH_BY_CAPTCHA_PASSWORD
+        )
+        try:
+            balance = client.get_balance()
+            print("balance", balance)
+
+            # Put your CAPTCHA file name or file-like object, and optional
+            # solving timeout (in seconds) here:
+            captcha = client.decode("captcha_image.png", 500)
+            if captcha:
+                # The CAPTCHA was solved; captcha["captcha"] item holds its
+                # numeric ID, and captcha["text"] item its text.
+                print("CAPTCHA %s solved: %s" % (captcha["captcha"], captcha["text"]))
+                # write captcha and click submit
+                self.selenium.find_element_by_name('ctl00$plcContent$CaptchaControl1').send_keys(captcha["text"])
+                self.selenium.find_element_by_xpath('//input[@type="Submit"]').click()
+                time.sleep(5)
+                # self._parse_company_profile_page()
+                return True
+            else:
+                print("CAPTCHA not solved", captcha)
+
+        except deathbycaptcha.AccessDeniedException:
+            print("Access to DBC API denied, check your credentials and/or balance")
+        return False
+
     def _check_for_captcha(self):
 
         if "ctlCrawlerKiller" in self.selenium.current_url:
-            print("CAPTCHA DETECTED")
-            # take a screenshot of the whole page
-            captcha_file_name = "screenshot.png"
-            self.selenium.save_screenshot(captcha_file_name)
-            # crop the screenshot to get the captcha image only
-            im = Image.open(captcha_file_name)
-            captcha_image = im.crop(
-                (420, 250, 600, 300)
-            )
-            captcha_image.save("captcha_image.png")
-            # initiate deathbycaptcha client to solve it
-            client = deathbycaptcha.SocketClient(
-                DEATH_BY_CAPTCHA_USERNAME,
-                DEATH_BY_CAPTCHA_PASSWORD
-            )
-            try:
-                balance = client.get_balance()
-                print("balance", balance)
-
-                # Put your CAPTCHA file name or file-like object, and optional
-                # solving timeout (in seconds) here:
-                captcha = client.decode("captcha_image.png", 500)
-                if captcha:
-                    # The CAPTCHA was solved; captcha["captcha"] item holds its
-                    # numeric ID, and captcha["text"] item its text.
-                    print("CAPTCHA %s solved: %s" % (captcha["captcha"], captcha["text"]))
-                    # write captcha and click submit
-                    self.selenium.find_element_by_name('ctl00$plcContent$CaptchaControl1').send_keys(captcha["text"])
-                    self.selenium.find_element_by_xpath('//input[@type="Submit"]').click()
-                    time.sleep(5)
-                    self._parse_company_profile_page()
-                    return True
-                else:
-                    print("CAPTCHA not solved", captcha)
-
-            except deathbycaptcha.AccessDeniedException:
-                print("Access to DBC API denied, check your credentials and/or balance")
-
+            is_captcha = self._solve_captcha()
         else:
-            self._parse_company_profile_page()
-            return False
+            is_captcha = False
+        self._parse_company_profile_page()
+        return is_captcha
 
     def _get_to_detail_page(self):
         # get number of the rows in the current page
@@ -445,6 +449,16 @@ class UpicBaseScrapper:
                 self.selenium.find_element_by_xpath(
                     '//*[@id="plcContent_ctl00_contactPanel"]/fieldset/table/tbody/tr/td[2]/table/tbody/tr[6]/td[2]/a'
                 ).click()
+                # check for captcha
+                captcha_solved = False
+                if "ctlCrawlerKiller" in self.selenium.current_url:
+                    print("------------------------------------------------------------------------")
+                    print("------------------------------------------------------------------------")
+                    print("Special captcha detected")
+                    print("------------------------------------------------------------------------")
+                    print("------------------------------------------------------------------------")
+                    captcha_solved = self._solve_captcha()
+
                 time.sleep(2)
                 for i in range(len(
                     self.selenium.find_elements_by_xpath(
@@ -461,7 +475,10 @@ class UpicBaseScrapper:
                         print(self.primary_contact_email_address)
                         print("------------------------------------------------------------------------")
                 time.sleep(5)
-                self.selenium.execute_script("window.history.go(-1)")
+                if captcha_solved:
+                    self.selenium.execute_script("window.history.go(-2)")
+                else:
+                    self.selenium.execute_script("window.history.go(-1)")
         except:
             pass
 
